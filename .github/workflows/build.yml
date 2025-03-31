@@ -23,6 +23,12 @@ jobs:
       - name: Build
         run: |
           cargo build --release
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binary
+          path: target/**/rime_ls
+
   build-windows:
     runs-on: windows-latest
     steps:
@@ -42,8 +48,14 @@ jobs:
           wget https://github.com/rime/librime/releases/download/1.11.2/rime-5b09f35-Windows-msvc-x64.7z -O rime.7z
           7z x rime.7z
           LIBRIME_INCLUDE_DIR=$PWD/dist/include LIBRIME_LIB_DIR=$PWD/dist/lib LIB=$PWD/dist/lib cargo build --release
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binary
+          path: target/**/rime_ls.exe
+
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -57,4 +69,11 @@ jobs:
           wget https://github.com/rime/librime/releases/download/1.11.2/rime-5b09f35-macOS-universal.tar.bz2 -O rime.tar.bz2
           7z x rime.tar.bz2
           7z x rime.tar
+      - name: Build
+        run: |
           LIBRIME_INCLUDE_DIR=$PWD/dist/include LIBRIME_LIB_DIR=$PWD/dist/lib LIB=$PWD/dist/lib cargo build --release
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-binary
+          path: target/**/rime_ls
