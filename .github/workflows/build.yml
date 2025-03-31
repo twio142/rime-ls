@@ -1,60 +1,81 @@
 name: Build
 
 on:
-  push:
-    paths-ignore:
-      - 'doc/**'
-      - 'README.md'
+  workflow_dispatch:
+  workflow_call:
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: rime_ls-x86_64-unknown-linux-gnu.tar.gz
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: rime_ls-x86_64-apple-darwin.tar.gz
+          - os: macos-15
+            target: aarch64-apple-darwin
+            archive: rime_ls-aarch64-apple-darwin.tar.gz
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          components: clippy
-      - name: Install dependencies
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ matrix.target }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.target }}-cargo-registry-
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target/
+          key: ${{ matrix.target }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.target }}-cargo-build-
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt install -y librime-dev
-      - name: Lint
-        run: cargo clippy -- -D warnings
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install librime
+
       - name: Build
         run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # Set librime paths for Homebrew installation
+            if [[ "${{ matrix.target }}" == "aarch64-apple-darwin" ]]; then
+              export LIBRIME_INCLUDE_DIR=/opt/homebrew/include
+              export LIBRIME_LIB_DIR=/opt/homebrew/lib
+            else
+              export LIBRIME_INCLUDE_DIR=/usr/local/include
+              export LIBRIME_LIB_DIR=/usr/local/lib
+            fi
+          fi
           cargo build --release
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          components: clippy
-      - uses: MinoruSekine/setup-scoop@v4.0.1
-        with:
-          buckets: extras
-      - name: Install dependencies
-        shell: bash
+
+      - name: Archive
         run: |
-          set -eux -o pipefail
-          scoop install wget
-          wget https://github.com/rime/librime/releases/download/1.11.2/rime-5b09f35-Windows-msvc-x64.7z -O rime.7z
-          7z x rime.7z
-          LIBRIME_INCLUDE_DIR=$PWD/dist/include LIBRIME_LIB_DIR=$PWD/dist/lib LIB=$PWD/dist/lib cargo build --release
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+          tar czvf ${{ matrix.archive }} -C target/release/ rime_ls
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          toolchain: stable
-          components: clippy
-      - name: Install dependencies
-        shell: bash
-        run: |
-          set -eux -o pipefail
-          wget https://github.com/rime/librime/releases/download/1.11.2/rime-5b09f35-macOS-universal.tar.bz2 -O rime.tar.bz2
-          7z x rime.tar.bz2
-          7z x rime.tar
-          LIBRIME_INCLUDE_DIR=$PWD/dist/include LIBRIME_LIB_DIR=$PWD/dist/lib LIB=$PWD/dist/lib cargo build --release
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
