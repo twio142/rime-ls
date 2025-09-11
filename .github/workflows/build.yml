@@ -3,6 +3,19 @@ name: Build
 on:
   workflow_dispatch:
   workflow_call:
+    outputs:
+      SHA256_arm64_macos:
+        description: 'SHA256 checksum for arm64-macos binary'
+        value: ${{ jobs.build.outputs.SHA256_arm64_macos }}
+      SHA256_x86_64_macos:
+        description: 'SHA256 checksum for x86_64-macos binary'
+        value: ${{ jobs.build.outputs.SHA256_x86_64_macos }}
+      SHA256_x86_64_linux:
+        description: 'SHA256 checksum for x86_64-linux binary'
+        value: ${{ jobs.build.outputs.SHA256_x86_64_linux }}
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -10,17 +23,21 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            archive: rime_ls-x86_64-unknown-linux-gnu.tar.gz
-          - os: macos-13
-            target: x86_64-apple-darwin
-            archive: rime_ls-x86_64-apple-darwin.tar.gz
           - os: macos-15
             target: aarch64-apple-darwin
-            archive: rime_ls-aarch64-apple-darwin.tar.gz
+            sha: SHA256_arm64_macos
+          - os: macos-13
+            target: x86_64-apple-darwin
+            sha: SHA256_x86_64_macos
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            sha: SHA256_x86_64_linux
+    outputs:
+      SHA256_arm64_macos: ${{ steps.checksum.outputs.SHA256_arm64_macos }}
+      SHA256_x86_64_macos: ${{ steps.checksum.outputs.SHA256_x86_64_macos }}
+      SHA256_x86_64_linux: ${{ steps.checksum.outputs.SHA256_x86_64_linux }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -72,10 +89,16 @@ jobs:
 
       - name: Archive
         run: |
-          tar czvf ${{ matrix.archive }} -C target/release/ rime_ls
+          tar czvf rime_ls-${{ matrix.target }}.tar.gz -C target/release/ rime_ls
+
+      - name: Compute SHA256
+        id: checksum
+        run: |
+          SHA256=$(shasum -a 256 rime_ls-${{ matrix.target }}.tar.gz | awk '{print $1 }')
+          echo "${{ matrix.sha }}=$SHA256" >> $GITHUB_OUTPUT
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.archive }}
-          path: ${{ matrix.archive }}
+          name: rime_ls-${{ matrix.target }}.tar.gz
+          path: rime_ls-${{ matrix.target }}.tar.gz

@@ -11,29 +11,11 @@ permissions:
   contents: read
 
 jobs:
-  release-info:
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.release_info.outputs.tag }}
-    steps:
-      - name: Set Release Tag
-        id: release_info
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            if [[ "${{ github.ref_type }}" == "tag" ]]; then
-              echo "tag=${{ github.ref_name }}-${{ github.run_id }}" >> $GITHUB_OUTPUT
-            else
-              echo "tag=v0.0.0-${{ github.run_id }}" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          fi
-
   build:
     uses: ./.github/workflows/build.yml
 
   release:
-    needs: [release-info, build]
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -43,20 +25,51 @@ jobs:
         with:
           merge-multiple: true
 
-      - name: Release
+      - name: Create release
+        id: release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.release-info.outputs.tag }}
-          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
-          files: |
-            rime_ls-x86_64-unknown-linux-gnu.tar.gz
-            rime_ls-x86_64-apple-darwin.tar.gz
-            rime_ls-aarch64-apple-darwin.tar.gz
+          tag_name: ${{ github.ref_name }}
+          files: rime_ls-*.tar.gz
+          fail_on_unmatched_files: true
 
-  update-homebrew-tap:
-    needs: [release-info, release]
-    uses: ./.github/workflows/homebrew.yml
-    with:
-      release_tag: ${{ needs.release-info.outputs.tag }}
-      dry_run: ${{ github.event_name == 'workflow_dispatch' }}
-    secrets: inherit
+  update-tap:
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Check out tap repository
+        uses: actions/checkout@v5
+        with:
+          repository: twio142/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Generate formula file
+        run: |
+          cd homebrew-tap
+          VERSION="${{ github.ref_name }}"
+          TEMPLATE_FILE="Formula/rime-ls.rb.template"
+          FORMULA_FILE="Formula/rime-ls.rb"
+          sed -e "s/%%VERSION%%/${VERSION#v}/g" \
+              -e "s/%%SHA_ARM64_MACOS%%/${{ needs.build.outputs.SHA256_arm64_macos }}/g" \
+              -e "s/%%SHA_X86_64_MACOS%%/${{ needs.build.outputs.SHA256_x86_64_macos }}/g" \
+              -e "s/%%SHA_X86_64_LINUX%%/${{ needs.build.outputs.SHA256_x86_64_linux }}/g" \
+              ${TEMPLATE_FILE} > ${FORMULA_FILE}
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          commit-message: "chore: bump rime-ls to ${{ github.ref_name }}"
+          title: "Bump rime-ls to ${{ github.ref_name }}"
+          body: "Automated release for rime-ls version ${{ github.ref_name }}"
+          branch: "bump-rime-ls-${{ github.ref_name }}"
+          base: main
+          delete-branch: true
+          add-paths: "Formula/rime-ls.rb"
